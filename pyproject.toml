@@ -8,6 +8,7 @@ version = "0.1.0"
 description = "A local CLI job application tracker."
 requires-python = ">=3.14"
 dependencies = [
+    "sqlalchemy>=2.0",
     "typer",
 ]
 
