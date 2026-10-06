@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jobtrack"
+version = "0.1.0"
+description = "A local CLI job application tracker."
+requires-python = ">=3.14"
+dependencies = [
+    "typer",
+]
+
+[project.scripts]
+jobtrack = "jobtrack.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
