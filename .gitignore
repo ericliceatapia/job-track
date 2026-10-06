@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local application data
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated exports
+exports/
+
+# IDE / OS
+.vscode/
+.DS_Store
+Thumbs.db
