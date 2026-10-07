@@ -2,6 +2,7 @@ from pathlib import Path
 
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session, sessionmaker
 
 
 APP_NAME = "JobTrack"
@@ -35,3 +36,11 @@ def initialize_database() -> None:
 
     engine = create_database_engine()
     Base.metadata.create_all(engine)
+
+
+def create_session() -> Session:
+    """Create a database session."""
+    engine = create_database_engine()
+    session_factory = sessionmaker(bind=engine)
+
+    return session_factory()
