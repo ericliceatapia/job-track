@@ -1,14 +1,20 @@
-from datetime import date
+from datetime import date, datetime
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from jobtrack.models import Application, ApplicationEvent
 from jobtrack.rules import (
+    normalize_required_text,
+    normalize_optional_text,
+    normalize_category,
+    normalize_job_type,
+    normalize_source,
+    normalize_work_modality,
     require_active_application,
     normalize_status_change,
     normalize_oa_action,
-    validate_oa_lifecycle
+    validate_oa_lifecycle,
 )
 
 
@@ -28,19 +34,37 @@ def create_application(
 ) -> Application:
     """Create an application and its initial event."""
 
+    normalized_company = normalize_required_text(
+        company,
+        "Company",
+    )
+    normalized_role_title = normalize_required_text(
+        role_title,
+        "Role title",
+    )
+    normalized_category = normalize_category(category)
+
+    normalized_location = normalize_optional_text(location)
+    normalized_work_modality = normalize_work_modality(work_modality)
+    normalized_job_type = normalize_job_type(job_type)
+    normalized_source = normalize_source(source)
+
+    normalized_job_id = normalize_optional_text(job_id)
+    normalized_notes = normalize_optional_text(notes)
+
     try:
         application = Application(
-            company=company,
-            role_title=role_title,
-            category=category,
-            location=location,
-            work_modality=work_modality,
-            job_type=job_type,
-            source=source,
+            company=normalized_company,
+            role_title=normalized_role_title,
+            category=normalized_category,
+            location=normalized_location,
+            work_modality=normalized_work_modality,
+            job_type=normalized_job_type,
+            source=normalized_source,
             application_date=application_date,
             status="Applied",
-            job_id=job_id,
-            notes=notes,
+            job_id=normalized_job_id,
+            notes=normalized_notes,
         )
 
         session.add(application)
@@ -141,24 +165,17 @@ def record_oa(
 
     normalized_action = normalize_oa_action(action)
 
-    received_event = session.scalar(
-        select(ApplicationEvent).where(
+    oa_event_types = set(session.scalars(
+        select(ApplicationEvent.event_type).where(
             ApplicationEvent.application_id == application_id,
-            ApplicationEvent.event_type == "OA_RECEIVED",
+            ApplicationEvent.event_type.in_(("OA_RECEIVED", "OA_COMPLETED")),
         )
-    )
-
-    completed_event = session.scalar(
-        select(ApplicationEvent).where(
-            ApplicationEvent.application_id == application_id,
-            ApplicationEvent.event_type == "OA_COMPLETED",
-        )
-    )
+    ))
 
     validate_oa_lifecycle(
         normalized_action,
-        has_received=received_event is not None,
-        has_completed=completed_event is not None,
+        has_received="OA_RECEIVED" in oa_event_types,
+        has_completed="OA_COMPLETED" in oa_event_types,
     )
 
     event_type = (
@@ -174,6 +191,7 @@ def record_oa(
             event_date=event_date,
         )
 
+        application.updated_at = datetime.now()
         session.add(event)
         session.commit()
         session.refresh(event)
@@ -205,9 +223,10 @@ def record_interview(
             application_id=application_id,
             event_type="INTERVIEW",
             event_date=event_date,
-            notes=notes,
+            notes=normalize_optional_text(notes),
         )
 
+        application.updated_at = datetime.now()
         session.add(event)
         session.commit()
         session.refresh(event)
