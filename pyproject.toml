@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.scripts]
-jobtrack = "jobtrack.cli:main"
+jt = "jobtrack.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
