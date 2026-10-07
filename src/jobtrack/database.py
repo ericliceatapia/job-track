@@ -27,3 +27,11 @@ def create_database_engine() -> Engine:
     database_url = f"sqlite:///{database_path.as_posix()}"
 
     return create_engine(database_url)
+
+
+def initialize_database() -> None:
+    """Create database tables that do not already exist."""
+    from jobtrack.models import Base
+
+    engine = create_database_engine()
+    Base.metadata.create_all(engine)

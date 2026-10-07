@@ -1,6 +1,9 @@
 import typer
 
-from jobtrack.database import create_database_engine, get_database_path
+from jobtrack.database import (
+    get_database_path,
+    initialize_database
+)
 
 
 app = typer.Typer()
@@ -14,11 +17,9 @@ def hello() -> None:
 
 @app.command()
 def db() -> None:
-    """Verify the database connection."""
-    engine = create_database_engine()
-
-    with engine.connect():
-        typer.echo(f"Connected to database: {get_database_path()}")
+    """Initialize the database."""
+    initialize_database()
+    typer.echo(f"Database initialized: {get_database_path()}")
 
 
 def main() -> None:
