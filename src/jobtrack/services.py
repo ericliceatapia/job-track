@@ -130,3 +130,76 @@ def change_status(
     except Exception:
         session.rollback()
         raise
+
+
+def record_oa(
+    session: Session,
+    application_id: int,
+    action: str,
+    event_date: date,
+) -> ApplicationEvent:
+    """Record an OA event for an application."""
+
+    application = session.get(Application, application_id)
+
+    if application is None:
+        raise ValueError(f"Application #{application_id} not found.")
+
+    action = action.lower()
+
+    if action not in {"received", "completed"}:
+        raise ValueError(
+            "Invalid OA action. Use 'received' or 'completed'."
+        )
+
+    received_event = session.scalar(
+        select(ApplicationEvent).where(
+            ApplicationEvent.application_id == application_id,
+            ApplicationEvent.event_type == "OA_RECEIVED",
+        )
+    )
+
+    completed_event = session.scalar(
+        select(ApplicationEvent).where(
+            ApplicationEvent.application_id == application_id,
+            ApplicationEvent.event_type == "OA_COMPLETED",
+        )
+    )
+
+    if action == "received":
+        if received_event is not None:
+            raise ValueError(
+                f"Application #{application_id} already has an OA received event."
+            )
+
+        event_type = "OA_RECEIVED"
+
+    else:
+        if received_event is None:
+            raise ValueError(
+                "Cannot complete an OA before recording it as received."
+            )
+
+        if completed_event is not None:
+            raise ValueError(
+                f"Application #{application_id} already has an OA completed event."
+            )
+
+        event_type = "OA_COMPLETED"
+
+    try:
+        event = ApplicationEvent(
+            application_id=application_id,
+            event_type=event_type,
+            event_date=event_date,
+        )
+
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        return event
+
+    except Exception:
+        session.rollback()
+        raise

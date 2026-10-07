@@ -12,6 +12,7 @@ from jobtrack.services import (
     list_applications,
     get_application,
     change_status,
+    record_oa,
 )
 
 
@@ -194,6 +195,37 @@ def status(
     typer.echo(
         f"Updated #{application_id}: "
         f"{application_company} — {application_role} → {new_status}"
+    )
+
+
+@app.command()
+def oa(
+    application_id: int,
+    action: str,
+) -> None:
+    """Record an OA as received or completed."""
+
+    session = create_session()
+
+    try:
+        event = record_oa(
+            session,
+            application_id=application_id,
+            action=action,
+            event_date=date.today(),
+        )
+
+        event_type = event.event_type
+
+    except ValueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
+
+    finally:
+        session.close()
+
+    typer.echo(
+        f"Recorded {event_type} for application #{application_id}."
     )
 
 
