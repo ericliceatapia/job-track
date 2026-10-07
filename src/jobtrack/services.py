@@ -207,7 +207,6 @@ def record_interview(
     session: Session,
     application_id: int,
     event_date: date,
-    notes: str | None = None,
 ) -> ApplicationEvent:
     """Record an interview event for an application."""
 
@@ -223,7 +222,6 @@ def record_interview(
             application_id=application_id,
             event_type="INTERVIEW",
             event_date=event_date,
-            notes=normalize_optional_text(notes),
         )
 
         application.updated_at = datetime.now()
@@ -233,6 +231,55 @@ def record_interview(
 
         return event
 
+    except Exception:
+        session.rollback()
+        raise
+
+def edit_role_notes(
+    session: Session,
+    application_id: int,
+    notes: str | None,
+) -> Application:
+    """Replace role notes without adding a lifecycle event."""
+
+    try:
+        application = session.get(Application, application_id)
+        if application is None:
+            raise ValueError(f"Application #{application_id} not found.")
+
+        application.notes = normalize_optional_text(notes)
+        session.commit()
+        session.refresh(application)
+        return application
+    except Exception:
+        session.rollback()
+        raise
+
+
+def record_note(
+    session: Session,
+    application_id: int,
+    notes: str,
+    event_date: date,
+) -> ApplicationEvent:
+    """Append an activity note, including for closed applications."""
+
+    try:
+        application = session.get(Application, application_id)
+        if application is None:
+            raise ValueError(f"Application #{application_id} not found.")
+
+        event = ApplicationEvent(
+            application_id=application_id,
+            event_type="NOTE_ADDED",
+            event_date=event_date,
+            notes=normalize_required_text(notes, "Activity note"),
+        )
+        application.updated_at = datetime.now()
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+        return event
     except Exception:
         session.rollback()
         raise

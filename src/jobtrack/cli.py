@@ -20,6 +20,8 @@ from jobtrack.services import (
     change_status,
     record_oa,
     record_interview,
+    edit_role_notes,
+    record_note,
 )
 from jobtrack.rules import (
     VALID_CATEGORIES,
@@ -184,7 +186,7 @@ def add() -> None:
     application_date = prompt_date("Application date")
 
     job_id = prompt_optional_text("Job ID")
-    notes = prompt_optional_text("Notes")
+    notes = prompt_optional_text("Role notes")
 
     try:
         with create_session() as session:
@@ -305,8 +307,8 @@ def show(application_id: int) -> None:
         console.print(details)
         console.print()
         console.print(Panel(
-            Text(application.notes or "No notes yet."),
-            title="Notes",
+            Text(application.notes or "No role notes yet. Use jt edit to add them."),
+            title="Role notes",
             title_align="left",
             border_style="dim",
         ))
@@ -323,6 +325,7 @@ def show(application_id: int) -> None:
             "OA_RECEIVED": "OA received",
             "OA_COMPLETED": "OA completed",
             "INTERVIEW": "Interview",
+            "NOTE_ADDED": "Note added",
         }
         history = Table.grid(padding=(0, 4))
         history.add_column(style="dim", no_wrap=True)
@@ -346,7 +349,7 @@ def show(application_id: int) -> None:
                     event.new_value or "--",
                     style=STATUS_STYLES.get(event.new_value, ""),
                 )
-            if event.notes:
+            if event.event_type == "NOTE_ADDED" and event.notes:
                 description.append(f"\n{event.notes}")
             history.add_row(Text(event.event_date.isoformat()), description)
         console.print(history)
@@ -428,14 +431,8 @@ def oa(
 @app.command()
 def interview(
     application_id: int,
-    notes: str | None = None,
 ) -> None:
     """Record an interview for an application."""
-
-    if notes is None:
-        notes = prompt_optional_text(
-            "Interview notes"
-        )
 
     try:
         with create_session() as session:
@@ -443,11 +440,9 @@ def interview(
                 session,
                 application_id=application_id,
                 event_date=date.today(),
-                notes=notes,
             )
 
             interview_date = event.event_date
-            notes = event.notes
 
     except ValueError as error:
         typer.echo(str(error), err=True)
@@ -459,8 +454,56 @@ def interview(
         f"#{application_id} on {interview_date}."
     )
 
-    if notes:
-        typer.echo(f"Notes: {notes}")
+@app.command()
+def log(
+    application_id: int,
+    message: Annotated[str | None, typer.Argument()] = None,
+) -> None:
+    """Append a dated activity note to application history."""
+
+    if message is None:
+        message = prompt_required_text("Activity note")
+
+    try:
+        with create_session() as session:
+            record_note(session, application_id, message, date.today())
+    except ValueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Added activity note to application #{application_id}.")
+
+
+@app.command()
+def edit(
+    application_id: int,
+    notes: Annotated[str | None, typer.Option(
+        "--notes",
+        help="Replace role notes. Use edit without options for guided input.",
+    )] = None,
+    clear_notes: Annotated[bool, typer.Option(
+        "--clear-notes", help="Clear the role notes panel.",
+    )] = False,
+) -> None:
+    """Edit role notes. Without options, prompt for replacement text."""
+
+    if clear_notes and notes is not None:
+        raise typer.BadParameter("Use either --notes or --clear-notes.")
+
+    if not clear_notes and notes is None:
+        notes = prompt_required_text("Role notes (replaces current text)")
+    if not clear_notes and not notes.strip():
+        raise typer.BadParameter("Use --clear-notes to clear role notes.")
+
+    try:
+        with create_session() as session:
+            edit_role_notes(session, application_id, None if clear_notes else notes)
+    except ValueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
+
+    action = "Cleared" if clear_notes else "Updated"
+    typer.echo(f"{action} role notes for application #{application_id}.")
 
 
 def main() -> None:
