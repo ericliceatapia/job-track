@@ -1,6 +1,10 @@
 from datetime import date
 from typing import Annotated
 
+from rich.console import Console
+from rich.table import Table
+from rich.text import Text
+
 import typer
 
 from jobtrack.database import (
@@ -26,7 +30,16 @@ from jobtrack.rules import (
 )
 
 
+STATUS_STYLES = {
+    "Applied": "blue",
+    "Offer": "green",
+    "Rejected": "red",
+    "Withdrawn": "dim",
+}
+
+
 app = typer.Typer()
+console = Console()
 
 
 def prompt_option(
@@ -201,17 +214,35 @@ def list_command() -> None:
         applications = list_applications(session)
 
         if not applications:
-            typer.echo("No applications found.")
+            console.print(
+                "No applications yet. Run jt add to create one.",
+                markup=False,
+            )
             return
 
+        table = Table(
+            title="Applications",
+            caption=f"{len(applications)} application(s)",
+        )
+        table.add_column("ID", justify="right", no_wrap=True)
+        table.add_column("Applied", no_wrap=True)
+        table.add_column("Company")
+        table.add_column("Role")
+        table.add_column("Status", no_wrap=True)
+
         for application in applications:
-            typer.echo(
-                f"#{application.id} | "
-                f"{application.application_date} | "
-                f"{application.company} | "
-                f"{application.role_title} | "
-                f"{application.status}"
+            table.add_row(
+                Text(str(application.id)),
+                Text(application.application_date.isoformat()),
+                Text(application.company),
+                Text(application.role_title),
+                Text(
+                    application.status,
+                    style=STATUS_STYLES.get(application.status, ""),
+                ),
             )
+
+        console.print(table)
 
 
 @app.command()
