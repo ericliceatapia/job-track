@@ -9,7 +9,6 @@ from jobtrack.models import Application, ApplicationEvent
 
 VALID_STATUSES = {
     "Applied",
-    "Interviewing",
     "Offer",
     "Rejected",
     "Withdrawn",
@@ -192,6 +191,61 @@ def record_oa(
             application_id=application_id,
             event_type=event_type,
             event_date=event_date,
+        )
+
+        session.add(event)
+        session.commit()
+        session.refresh(event)
+
+        return event
+
+    except Exception:
+        session.rollback()
+        raise
+
+
+def get_application_stage(application: Application) -> str:
+    """Return the derived lifecycle stage for an application."""
+
+    if application.status != "Applied":
+        return application.status
+
+    has_interview = any(
+        event.event_type == "INTERVIEW"
+        for event in application.events
+    )
+
+    if has_interview:
+        return "Interviewing"
+
+    return "Applied"
+
+
+def record_interview(
+    session: Session,
+    application_id: int,
+    event_date: date,
+    notes: str | None = None,
+) -> ApplicationEvent:
+    """Record an interview event for an application."""
+
+    application = session.get(Application, application_id)
+
+    if application is None:
+        raise ValueError(f"Application #{application_id} not found.")
+
+    if application.status != "Applied":
+        raise ValueError(
+            f"Cannot record an interview for an application "
+            f"with status '{application.status}'."
+        )
+
+    try:
+        event = ApplicationEvent(
+            application_id=application_id,
+            event_type="INTERVIEW",
+            event_date=event_date,
+            notes=notes,
         )
 
         session.add(event)

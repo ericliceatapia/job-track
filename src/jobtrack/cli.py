@@ -11,8 +11,10 @@ from jobtrack.services import (
     create_application,
     list_applications,
     get_application,
+    get_application_stage,
     change_status,
     record_oa,
+    record_interview,
 )
 
 
@@ -107,7 +109,7 @@ def list_command() -> None:
                 f"{application.application_date} | "
                 f"{application.company} | "
                 f"{application.role_title} | "
-                f"{application.status}"
+                f"{get_application_stage(application)}"
             )
 
     finally:
@@ -129,7 +131,7 @@ def show(application_id: int) -> None:
         typer.echo(f"{application.company} — {application.role_title}")
         typer.echo()
         typer.echo(f"ID:               {application.id}")
-        typer.echo(f"Status:           {application.status}")
+        typer.echo(f"Status:           {get_application_stage(application)}")
         typer.echo(f"Category:         {application.category}")
         typer.echo(f"Location:         {application.location or '--'}")
         typer.echo(f"Work modality:    {application.work_modality}")
@@ -156,6 +158,9 @@ def show(application_id: int) -> None:
                 event_description += (
                     f" | {event.old_value or '--'} → {event.new_value or '--'}"
                 )
+                
+            if event.notes:
+                event_description += f" | {event.notes}"
 
             typer.echo(
                 f"{event.event_date} | {event_description}"
@@ -226,6 +231,38 @@ def oa(
 
     typer.echo(
         f"Recorded {event_type} for application #{application_id}."
+    )
+
+
+@app.command()
+def interview(
+    application_id: int,
+    notes: str | None = None,
+) -> None:
+    """Record an interview for an application."""
+
+    session = create_session()
+
+    try:
+        event = record_interview(
+            session,
+            application_id=application_id,
+            event_date=date.today(),
+            notes=notes,
+        )
+
+        event_date = event.event_date
+
+    except ValueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
+
+    finally:
+        session.close()
+
+    typer.echo(
+        f"Recorded interview for application "
+        f"#{application_id} on {event_date}."
     )
 
 
