@@ -11,6 +11,7 @@ from jobtrack.services import (
     create_application,
     list_applications,
     get_application,
+    change_status,
 )
 
 
@@ -148,12 +149,52 @@ def show(application_id: int) -> None:
             application.events,
             key=lambda event: (event.event_date, event.id),
         ):
+            event_description = event.event_type
+
+            if event.old_value is not None or event.new_value is not None:
+                event_description += (
+                    f" | {event.old_value or '--'} → {event.new_value or '--'}"
+                )
+
             typer.echo(
-                f"{event.event_date} | {event.event_type}"
+                f"{event.event_date} | {event_description}"
             )
 
     finally:
         session.close()
+
+
+@app.command()
+def status(
+    application_id: int,
+    new_status: str,
+) -> None:
+    """Change an application's status."""
+
+    session = create_session()
+
+    try:
+        application = change_status(
+            session,
+            application_id=application_id,
+            new_status=new_status,
+            event_date=date.today(),
+        )
+
+        application_company = application.company
+        application_role = application.role_title
+
+    except ValueError as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
+
+    finally:
+        session.close()
+
+    typer.echo(
+        f"Updated #{application_id}: "
+        f"{application_company} — {application_role} → {new_status}"
+    )
 
 
 def main() -> None:

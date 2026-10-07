@@ -7,6 +7,15 @@ from sqlalchemy.orm import Session
 from jobtrack.models import Application, ApplicationEvent
 
 
+VALID_STATUSES = {
+    "Applied",
+    "Interviewing",
+    "Offer",
+    "Rejected",
+    "Withdrawn",
+}
+
+
 def create_application(
     session: Session,
     *,
@@ -76,3 +85,48 @@ def get_application(
     """Return an application by ID."""
 
     return session.get(Application, application_id)
+
+
+def change_status(
+    session: Session,
+    application_id: int,
+    new_status: str,
+    event_date: date,
+) -> Application:
+    """Change an application's status and record the change."""
+
+    application = session.get(Application, application_id)
+
+    if application is None:
+        raise ValueError(f"Application #{application_id} not found.")
+
+    if new_status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status: {new_status}")
+
+    old_status = application.status
+
+    if old_status == new_status:
+        raise ValueError(
+            f"Application #{application_id} is already {new_status}."
+        )
+
+    try:
+        application.status = new_status
+
+        event = ApplicationEvent(
+            application_id=application.id,
+            event_type="STATUS_CHANGED",
+            event_date=event_date,
+            old_value=old_status,
+            new_value=new_status,
+        )
+
+        session.add(event)
+        session.commit()
+        session.refresh(application)
+
+        return application
+
+    except Exception:
+        session.rollback()
+        raise
