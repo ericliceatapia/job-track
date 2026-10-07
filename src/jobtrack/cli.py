@@ -9,6 +9,7 @@ from jobtrack.database import (
 )
 from jobtrack.services import (
     create_application,
+    list_applications,
 )
 
 
@@ -26,7 +27,6 @@ def db() -> None:
     """Initialize the database."""
     initialize_database()
     typer.echo(f"Database initialized: {get_database_path()}")
-
 
 
 @app.command()
@@ -90,6 +90,31 @@ def add() -> None:
         f"Added application #{application_id}: "
         f"{application_company} - {application_role}"
     )
+
+
+@app.command("list")
+def list_command() -> None:
+    """List job applications."""
+    session = create_session()
+
+    try:
+        applications = list_applications(session)
+
+        if not applications:
+            typer.echo("No applications found.")
+            return
+
+        for application in applications:
+            typer.echo(
+                f"#{application.id} | "
+                f"{application.application_date} | "
+                f"{application.company} | "
+                f"{application.role_title} | "
+                f"{application.status}"
+            )
+
+    finally:
+        session.close()
 
 
 def main() -> None:

@@ -57,3 +57,13 @@ def create_application(
         session.rollback()
         raise
 
+
+def list_applications(session: Session) -> list[Application]:
+    """Return all applications ordered by application date."""
+
+    statement = select(Application).order_by(
+        Application.application_date.desc(),
+        Application.id.desc(),
+    )
+
+    return list(session.scalars(statement).all())
