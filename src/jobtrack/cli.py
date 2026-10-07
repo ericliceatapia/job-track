@@ -49,22 +49,24 @@ def prompt_option(
 ) -> str:
     """Prompt the user to select an option from a numbered list."""
 
-    typer.echo()
-    typer.echo(label)
+    console.print()
+    console.print(Text(label, style="bold cyan"))
 
     for index, option in enumerate(options, start=1):
-        typer.echo(f"{index}. {option}")
+        choice = Text(f"  {index}. ", style="cyan")
+        choice.append(option, style="default")
+        console.print(choice)
 
     while True:
         selection = typer.prompt(
-            f"Select [1-{len(options)}]"
+            typer.style(f"Select [1-{len(options)}]", fg=typer.colors.CYAN, bold=True)
         )
 
         try:
             index = int(selection)
         except ValueError:
             typer.echo(
-                "Enter a number.",
+                typer.style("Enter a number.", fg=typer.colors.RED),
                 err=True,
             )
             continue
@@ -73,7 +75,10 @@ def prompt_option(
             return options[index - 1]
 
         typer.echo(
-            f"Enter a number from 1 to {len(options)}.",
+            typer.style(
+                f"Enter a number from 1 to {len(options)}.",
+                fg=typer.colors.RED,
+            ),
             err=True,
         )
 
@@ -82,13 +87,15 @@ def prompt_required_text(label: str) -> str:
     """Prompt until non-empty text is entered."""
 
     while True:
-        value = typer.prompt(label).strip()
+        value = typer.prompt(
+            typer.style(label, fg=typer.colors.CYAN, bold=True)
+        ).strip()
 
         if value:
             return value
 
         typer.echo(
-            f"{label} cannot be empty.",
+            typer.style(f"{label} cannot be empty.", fg=typer.colors.RED),
             err=True,
         )
 
@@ -97,7 +104,8 @@ def prompt_optional_text(label: str) -> str | None:
     """Prompt for optional text."""
 
     value = typer.prompt(
-        label,
+        typer.style(label, fg=typer.colors.CYAN, bold=True)
+        + typer.style(" (Enter to skip)", dim=True),
         default="",
         show_default=False,
     ).strip()
@@ -115,7 +123,8 @@ def prompt_date(
 
     while True:
         value = typer.prompt(
-            label,
+            typer.style(label, fg=typer.colors.CYAN, bold=True)
+            + typer.style(" (YYYY-MM-DD)", dim=True),
             default=default_date.isoformat(),
         ).strip()
 
@@ -126,7 +135,7 @@ def prompt_date(
             return parsed_date
         except ValueError:
             typer.echo(
-                "Invalid date. Use YYYY-MM-DD.",
+                typer.style("Invalid date. Use YYYY-MM-DD.", fg=typer.colors.RED),
                 err=True,
             )
 
@@ -143,8 +152,9 @@ def db() -> None:
 def add() -> None:
     """Add a new job application."""
 
-    typer.echo("Add Application")
-    typer.echo()
+    console.print("Add Application", style="bold cyan")
+    console.print("Choose numbered options; press Enter to skip optional fields.", style="dim")
+    console.print()
 
     company = prompt_required_text("Company")
     role_title = prompt_required_text("Role title")
