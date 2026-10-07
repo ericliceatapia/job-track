@@ -1,6 +1,6 @@
-from datetime import date
-
 import typer
+
+from datetime import date
 
 from jobtrack.database import (
     create_session,
@@ -11,7 +11,6 @@ from jobtrack.services import (
     create_application,
     list_applications,
     get_application,
-    get_application_stage,
     change_status,
     record_oa,
     record_interview,
@@ -24,6 +23,7 @@ app = typer.Typer()
 @app.command()
 def db() -> None:
     """Initialize the database."""
+    
     initialize_database()
     typer.echo(f"Database initialized: {get_database_path()}")
 
@@ -60,9 +60,7 @@ def add() -> None:
         )
         raise typer.Exit(code=1)
 
-    session = create_session()
-
-    try:
+    with create_session() as session:
         application = create_application(
             session,
             company=company,
@@ -81,9 +79,6 @@ def add() -> None:
         application_company = application.company
         application_role = application.role_title
 
-    finally:
-        session.close()
-
     typer.echo()
     typer.echo(
         f"Added application #{application_id}: "
@@ -94,9 +89,8 @@ def add() -> None:
 @app.command("list")
 def list_command() -> None:
     """List job applications."""
-    session = create_session()
 
-    try:
+    with create_session() as session:
         applications = list_applications(session)
 
         if not applications:
@@ -109,19 +103,15 @@ def list_command() -> None:
                 f"{application.application_date} | "
                 f"{application.company} | "
                 f"{application.role_title} | "
-                f"{get_application_stage(application)}"
+                f"{application.status}"
             )
-
-    finally:
-        session.close()
 
 
 @app.command()
 def show(application_id: int) -> None:
     """Show an application and its event history."""
-    session = create_session()
 
-    try:
+    with create_session() as session:
         application = get_application(session, application_id)
 
         if application is None:
@@ -131,7 +121,7 @@ def show(application_id: int) -> None:
         typer.echo(f"{application.company} — {application.role_title}")
         typer.echo()
         typer.echo(f"ID:               {application.id}")
-        typer.echo(f"Status:           {get_application_stage(application)}")
+        typer.echo(f"Status:           {application.status}")
         typer.echo(f"Category:         {application.category}")
         typer.echo(f"Location:         {application.location or '--'}")
         typer.echo(f"Work modality:    {application.work_modality}")
@@ -166,9 +156,6 @@ def show(application_id: int) -> None:
                 f"{event.event_date} | {event_description}"
             )
 
-    finally:
-        session.close()
-
 
 @app.command()
 def status(
@@ -177,29 +164,26 @@ def status(
 ) -> None:
     """Change an application's status."""
 
-    session = create_session()
-
     try:
-        application = change_status(
-            session,
-            application_id=application_id,
-            new_status=new_status,
-            event_date=date.today(),
-        )
+        with create_session() as session:
+            application = change_status(
+                session,
+                application_id=application_id,
+                new_status=new_status,
+                event_date=date.today(),
+            )
 
-        application_company = application.company
-        application_role = application.role_title
+            application_company = application.company
+            application_role = application.role_title
+            application_status = application.status
 
     except ValueError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1)
 
-    finally:
-        session.close()
-
     typer.echo(
         f"Updated #{application_id}: "
-        f"{application_company} — {application_role} → {new_status}"
+        f"{application_company} — {application_role} → {application_status}"
     )
 
 
@@ -210,24 +194,20 @@ def oa(
 ) -> None:
     """Record an OA as received or completed."""
 
-    session = create_session()
-
     try:
-        event = record_oa(
-            session,
-            application_id=application_id,
-            action=action,
-            event_date=date.today(),
-        )
+        with create_session() as session:
+            event = record_oa(
+                session,
+                application_id=application_id,
+                action=action,
+                event_date=date.today(),
+            )
 
-        event_type = event.event_type
+            event_type = event.event_type
 
     except ValueError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1)
-
-    finally:
-        session.close()
 
     typer.echo(
         f"Recorded {event_type} for application #{application_id}."
@@ -241,28 +221,24 @@ def interview(
 ) -> None:
     """Record an interview for an application."""
 
-    session = create_session()
-
     try:
-        event = record_interview(
-            session,
-            application_id=application_id,
-            event_date=date.today(),
-            notes=notes,
-        )
+        with create_session() as session:
+            event = record_interview(
+                session,
+                application_id=application_id,
+                event_date=date.today(),
+                notes=notes,
+            )
 
-        event_date = event.event_date
+            interview_date = event.event_date
 
     except ValueError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1)
 
-    finally:
-        session.close()
-
     typer.echo(
         f"Recorded interview for application "
-        f"#{application_id} on {event_date}."
+        f"#{application_id} on {interview_date}."
     )
 
 

@@ -1,18 +1,15 @@
 from datetime import date
 
 from sqlalchemy import select
-
 from sqlalchemy.orm import Session
 
 from jobtrack.models import Application, ApplicationEvent
-
-
-VALID_STATUSES = {
-    "Applied",
-    "Offer",
-    "Rejected",
-    "Withdrawn",
-}
+from jobtrack.rules import (
+    require_active_application,
+    normalize_status_change,
+    normalize_oa_action,
+    validate_oa_lifecycle
+)
 
 
 def create_application(
@@ -99,25 +96,21 @@ def change_status(
     if application is None:
         raise ValueError(f"Application #{application_id} not found.")
 
-    if new_status not in VALID_STATUSES:
-        raise ValueError(f"Invalid status: {new_status}")
-
-    old_status = application.status
-
-    if old_status == new_status:
-        raise ValueError(
-            f"Application #{application_id} is already {new_status}."
-        )
+    normalized_status = normalize_status_change(
+        current_status=application.status,
+        new_status=new_status,
+    )
 
     try:
-        application.status = new_status
+        old_status = application.status
+        application.status = normalized_status
 
         event = ApplicationEvent(
             application_id=application.id,
             event_type="STATUS_CHANGED",
             event_date=event_date,
             old_value=old_status,
-            new_value=new_status,
+            new_value=normalized_status,
         )
 
         session.add(event)
@@ -144,12 +137,9 @@ def record_oa(
     if application is None:
         raise ValueError(f"Application #{application_id} not found.")
 
-    action = action.lower()
+    require_active_application(application.status)
 
-    if action not in {"received", "completed"}:
-        raise ValueError(
-            "Invalid OA action. Use 'received' or 'completed'."
-        )
+    normalized_action = normalize_oa_action(action)
 
     received_event = session.scalar(
         select(ApplicationEvent).where(
@@ -165,26 +155,17 @@ def record_oa(
         )
     )
 
-    if action == "received":
-        if received_event is not None:
-            raise ValueError(
-                f"Application #{application_id} already has an OA received event."
-            )
+    validate_oa_lifecycle(
+        normalized_action,
+        has_received=received_event is not None,
+        has_completed=completed_event is not None,
+    )
 
-        event_type = "OA_RECEIVED"
-
-    else:
-        if received_event is None:
-            raise ValueError(
-                "Cannot complete an OA before recording it as received."
-            )
-
-        if completed_event is not None:
-            raise ValueError(
-                f"Application #{application_id} already has an OA completed event."
-            )
-
-        event_type = "OA_COMPLETED"
+    event_type = (
+        "OA_RECEIVED"
+        if normalized_action == "received"
+        else "OA_COMPLETED"
+    )
 
     try:
         event = ApplicationEvent(
@@ -204,23 +185,6 @@ def record_oa(
         raise
 
 
-def get_application_stage(application: Application) -> str:
-    """Return the derived lifecycle stage for an application."""
-
-    if application.status != "Applied":
-        return application.status
-
-    has_interview = any(
-        event.event_type == "INTERVIEW"
-        for event in application.events
-    )
-
-    if has_interview:
-        return "Interviewing"
-
-    return "Applied"
-
-
 def record_interview(
     session: Session,
     application_id: int,
@@ -234,11 +198,7 @@ def record_interview(
     if application is None:
         raise ValueError(f"Application #{application_id} not found.")
 
-    if application.status != "Applied":
-        raise ValueError(
-            f"Cannot record an interview for an application "
-            f"with status '{application.status}'."
-        )
+    require_active_application(application.status)
 
     try:
         event = ApplicationEvent(
