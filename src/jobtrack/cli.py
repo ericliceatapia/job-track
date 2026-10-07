@@ -2,6 +2,7 @@ from datetime import date
 from typing import Annotated
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -262,72 +263,83 @@ def show(application_id: int) -> None:
             )
             raise typer.Exit(code=1)
 
-        typer.echo(
-            f"{application.company} - "
-            f"{application.role_title}"
-        )
-        typer.echo()
+        status_style = STATUS_STYLES.get(application.status, "")
+        heading = Text()
+        heading.append(application.company, style="bold")
+        heading.append(f"\n{application.role_title}")
+        heading.append("\n\nStatus: ", style="dim")
+        heading.append(application.status, style=status_style)
+        console.print(Panel(
+            heading,
+            title=f"Application #{application.id}",
+            title_align="left",
+            border_style=status_style or "dim",
+        ))
+        console.print()
 
-        typer.echo(f"ID:               {application.id}")
-        typer.echo(f"Status:           {application.status}")
-        typer.echo(f"Category:         {application.category}")
-        typer.echo(
-            f"Location:         "
-            f"{application.location or '--'}"
-        )
-        typer.echo(
-            f"Work modality:    "
-            f"{application.work_modality}"
-        )
-        typer.echo(f"Job type:         {application.job_type}")
-        typer.echo(f"Source:           {application.source}")
-        typer.echo(
-            f"Application date: "
-            f"{application.application_date}"
-        )
-        typer.echo(
-            f"Job ID:           "
-            f"{application.job_id or '--'}"
-        )
-        typer.echo(
-            f"Notes:            "
-            f"{application.notes or '--'}"
-        )
+        details = Table.grid(padding=(0, 4))
+        details.add_column(style="dim", no_wrap=True)
+        details.add_column(overflow="fold")
+        for label, value in (
+            ("Category", application.category),
+            ("Location", application.location or "--"),
+            ("Work modality", application.work_modality),
+            ("Job type", application.job_type),
+            ("Source", application.source),
+            ("Applied", application.application_date.isoformat()),
+            ("Job ID", application.job_id or "--"),
+            ("Created", application.created_at.strftime("%Y-%m-%d %H:%M:%S")),
+            ("Last updated", application.updated_at.strftime("%Y-%m-%d %H:%M:%S")),
+        ):
+            details.add_row(label, Text(value))
+        console.print(details)
+        console.print()
+        console.print(Panel(
+            Text(application.notes or "No notes yet."),
+            title="Notes",
+            title_align="left",
+            border_style="dim",
+        ))
 
-        typer.echo()
-        typer.echo("History")
-
+        console.print()
+        console.print("History", style="bold")
         if not application.events:
-            typer.echo("No events recorded.")
+            console.print("No events recorded.", style="dim")
             return
 
+        event_labels = {
+            "APPLICATION_CREATED": "Application created",
+            "STATUS_CHANGED": "Status changed",
+            "OA_RECEIVED": "OA received",
+            "OA_COMPLETED": "OA completed",
+            "INTERVIEW": "Interview",
+        }
+        history = Table.grid(padding=(0, 4))
+        history.add_column(style="dim", no_wrap=True)
+        history.add_column(overflow="fold")
         for event in sorted(
             application.events,
-            key=lambda event: (
-                event.event_date,
-                event.id,
-            ),
+            key=lambda event: (event.event_date, event.id),
         ):
-            event_description = event.event_type
-
-            if (
-                event.old_value is not None
-                or event.new_value is not None
-            ):
-                event_description += (
-                    f" | {event.old_value or '--'}"
-                    f" -> {event.new_value or '--'}"
-                )
-
-            if event.notes:
-                event_description += (
-                    f" | {event.notes}"
-                )
-
-            typer.echo(
-                f"{event.event_date} | "
-                f"{event_description}"
+            description = Text(
+                event_labels.get(event.event_type, event.event_type),
+                style="bold",
             )
+            if event.old_value is not None or event.new_value is not None:
+                description.append("\n")
+                description.append(
+                    event.old_value or "--",
+                    style=STATUS_STYLES.get(event.old_value, ""),
+                )
+                description.append(" -> ")
+                description.append(
+                    event.new_value or "--",
+                    style=STATUS_STYLES.get(event.new_value, ""),
+                )
+            if event.notes:
+                description.append(f"\n{event.notes}")
+            history.add_row(Text(event.event_date.isoformat()), description)
+        console.print(history)
 
 
 @app.command()
