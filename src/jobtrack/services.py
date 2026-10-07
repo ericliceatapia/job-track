@@ -67,3 +67,12 @@ def list_applications(session: Session) -> list[Application]:
     )
 
     return list(session.scalars(statement).all())
+
+
+def get_application(
+    session: Session,
+    application_id: int,
+) -> Application | None:
+    """Return an application by ID."""
+
+    return session.get(Application, application_id)

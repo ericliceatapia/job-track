@@ -10,16 +10,11 @@ from jobtrack.database import (
 from jobtrack.services import (
     create_application,
     list_applications,
+    get_application,
 )
 
 
 app = typer.Typer()
-
-
-@app.command()
-def hello() -> None:
-    """Verify that JobTrack is running."""
-    typer.echo("JobTrack is running.")
 
 
 @app.command()
@@ -111,6 +106,50 @@ def list_command() -> None:
                 f"{application.company} | "
                 f"{application.role_title} | "
                 f"{application.status}"
+            )
+
+    finally:
+        session.close()
+
+
+@app.command()
+def show(application_id: int) -> None:
+    """Show an application and its event history."""
+    session = create_session()
+
+    try:
+        application = get_application(session, application_id)
+
+        if application is None:
+            typer.echo(f"Application #{application_id} not found.", err=True)
+            raise typer.Exit(code=1)
+
+        typer.echo(f"{application.company} — {application.role_title}")
+        typer.echo()
+        typer.echo(f"ID:               {application.id}")
+        typer.echo(f"Status:           {application.status}")
+        typer.echo(f"Category:         {application.category}")
+        typer.echo(f"Location:         {application.location or '--'}")
+        typer.echo(f"Work modality:    {application.work_modality}")
+        typer.echo(f"Job type:         {application.job_type}")
+        typer.echo(f"Source:           {application.source}")
+        typer.echo(f"Application date: {application.application_date}")
+        typer.echo(f"Job ID:           {application.job_id or '--'}")
+        typer.echo(f"Notes:            {application.notes or '--'}")
+
+        typer.echo()
+        typer.echo("History")
+
+        if not application.events:
+            typer.echo("No events recorded.")
+            return
+
+        for event in sorted(
+            application.events,
+            key=lambda event: (event.event_date, event.id),
+        ):
+            typer.echo(
+                f"{event.event_date} | {event.event_type}"
             )
 
     finally:
