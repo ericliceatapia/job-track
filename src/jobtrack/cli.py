@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 from typing import Annotated
 
 from rich.console import Console
@@ -529,6 +530,34 @@ def edit(
 
     action = "Cleared" if clear_notes else "Updated"
     typer.echo(f"{action} role notes for application #{application_id}.")
+
+
+@app.command("export")
+def export_command(
+    destination: Annotated[Path, typer.Argument(help="Output .xlsx file path.")],
+    company: Annotated[str | None, typer.Option(help="Match part of a company name.")] = None,
+    status: Annotated[str | None, typer.Option(help="Filter by application status.")] = None,
+    category: Annotated[str | None, typer.Option(help="Filter by category.")] = None,
+    overwrite: Annotated[bool, typer.Option(help="Replace an existing export file.")] = False,
+) -> None:
+    """Export matching applications and their complete history to Excel."""
+
+    from jobtrack.exporting import export_applications
+
+    try:
+        with create_session() as session:
+            applications = list_applications(
+                session, company=company, status=status, category=category,
+            )
+            count = len(applications)
+            event_count = export_applications(
+                applications, destination, overwrite=overwrite,
+            )
+    except (ValueError, OSError) as error:
+        typer.echo(str(error), err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(f"Exported {count} applications and {event_count} events to {destination}.")
 
 
 def main() -> None:
