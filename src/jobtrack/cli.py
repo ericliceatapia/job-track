@@ -220,11 +220,32 @@ def add() -> None:
 
 
 @app.command("list")
-def list_command() -> None:
-    """List job applications."""
+def list_command(
+    company: Annotated[str | None, typer.Option(
+        "--company", help="Match part of a company name, ignoring case.",
+    )] = None,
+    status: Annotated[str | None, typer.Option(
+        "--status", help="Filter by Applied, Offer, Rejected, or Withdrawn.",
+    )] = None,
+    category: Annotated[str | None, typer.Option(
+        "--category", help="Filter by a category, such as Analytics or Software.",
+    )] = None,
+) -> None:
+    """List applications. Combine filters to narrow the results."""
 
     with create_session() as session:
-        applications = list_applications(session)
+        try:
+            applications = list_applications(
+                session, company=company, status=status, category=category,
+            )
+        except ValueError as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(code=1)
+
+        filtered = any(value is not None for value in (company, status, category))
+        if not applications and filtered:
+            console.print("No applications match these filters.", style="dim")
+            return
 
         if not applications:
             console.print(
@@ -235,12 +256,15 @@ def list_command() -> None:
 
         table = Table(
             title="Applications",
-            caption=f"{len(applications)} application(s)",
+            caption=f"{len(applications)} matching application(s)" if filtered else f"{len(applications)} application(s)",
+            show_lines=True,
+            expand=True,
         )
         table.add_column("ID", justify="right", no_wrap=True)
         table.add_column("Applied", no_wrap=True)
-        table.add_column("Company")
-        table.add_column("Role")
+        table.add_column("Company", ratio=2)
+        table.add_column("Role", ratio=3)
+        table.add_column("Location")
         table.add_column("Status", no_wrap=True)
 
         for application in applications:
@@ -249,6 +273,7 @@ def list_command() -> None:
                 Text(application.application_date.isoformat()),
                 Text(application.company),
                 Text(application.role_title),
+                Text(application.location or "--"),
                 Text(
                     application.status,
                     style=STATUS_STYLES.get(application.status, ""),

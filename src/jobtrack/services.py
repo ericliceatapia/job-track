@@ -13,6 +13,7 @@ from jobtrack.rules import (
     normalize_work_modality,
     require_active_application,
     normalize_status_change,
+    normalize_status,
     normalize_oa_action,
     validate_oa_lifecycle,
 )
@@ -87,13 +88,28 @@ def create_application(
         raise
 
 
-def list_applications(session: Session) -> list[Application]:
-    """Return all applications ordered by application date."""
+def list_applications(
+    session: Session,
+    *,
+    company: str | None = None,
+    status: str | None = None,
+    category: str | None = None,
+) -> list[Application]:
+    """Return applications matching all supplied filters, ordered by date."""
 
     statement = select(Application).order_by(
-        Application.application_date.desc(),
-        Application.id.desc(),
+        Application.application_date.asc(),
+        Application.id.asc(),
     )
+
+    if company is not None:
+        statement = statement.where(Application.company.icontains(
+            normalize_required_text(company, "Company filter"), autoescape=True,
+        ))
+    if status is not None:
+        statement = statement.where(Application.status == normalize_status(status))
+    if category is not None:
+        statement = statement.where(Application.category == normalize_category(category))
 
     return list(session.scalars(statement).all())
 
