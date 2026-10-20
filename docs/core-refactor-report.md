@@ -23,7 +23,8 @@ was introduced.
 | create_application | Existing keyword metadata; returns Application with initial event |
 | list_applications | Optional company/status/category AND filters; returns list[Application] ordered by date/ID |
 | get_application | Positive integer ID; returns Application or None |
-| update_application | ID, metadata mapping, optional oa/interview/activity_note/status/event_date; returns Application |
+| update_application | ID, metadata mapping, boolean oa/interview, optional expected_oa/activity_note/status/event_date; returns Application |
+| propose_online_assessment | ID, optional event_date; returns immutable OAProposal(event_type, event_date), with None event_type when complete |
 | export_application_data | Path and same filters, optional overwrite; returns (application count, event count) |
 
 Editable metadata: company, role_title, category, location, work_modality,
@@ -79,8 +80,9 @@ can adopt these commits when authorized; their worktrees were not modified.
 - Preserved Applied -> Offer/Rejected/Withdrawn and terminal restrictions; no reopen.
 - Preserved OA received prerequisite, duplicate prevention and repeated interviews.
 - Preserved role-note replacement without events and activity notes after closure.
-- Preserved backdated events: prerequisite means an existing received milestone,
-  not a restriction on supplied dates. History remains date/ID ordered.
+- Historical events remain supported and date/ID ordered. The OA amendment now
+  requires receipt on/after application_date and completion on/after receipt.
+  Same-day milestones are valid; unrelated activity dates are unchanged.
 - Preserved filtering, literal wildcard matching, XLSX sheets/style/literal text,
   and the unchanged application/event tables.
 - Added metadata editing and atomic combinations. Milestones execute before a
@@ -111,7 +113,8 @@ blocks. Preserved meaningful compatibility entry points and lifecycle rules.
 
 The initial audit/design and 9 passing characterization tests were committed
 before service changes. Core changes then passed 24 tests. CLI integration and
-additional cases produce **52 passing tests** with:
+additional cases initially produced 52 passing tests. The OA amendment expands
+the suite to **76 passing tests** with:
 
 ```
 .venv\Scripts\python.exe -m pytest -q
@@ -141,3 +144,22 @@ storage paths over the process lifetime. Services deliberately own commits; call
 needing multi-application transactions would require an explicit future contract.
 XLSX overwrite retains the existing direct file-write behavior, without crash-safe
 replacement guarantees. These limitations do not require schema or UI work here.
+
+
+## Online Assessment amendment
+
+See [the amended specification](online-assessment-amendment.md). The CLI exposes
+one Online Assessment activity (`--oa` or the guided category). It asks the core
+for a read-only proposal, displays a confirmation, and only calls update after
+confirmation. Core determines the milestone and validates chronology and closure.
+The public update `oa` argument is now boolean, replacing the earlier string action.
+`expected_oa` binds confirmation to the proposed event type; it never overrides
+automatic selection. The legacy record_oa adapter retains its signature by treating
+its action as an expectation; it also follows the new chronology rule.
+
+New coverage includes proposal immutability/no flush, automatic selection, completed
+no-op reporting, stale confirmation rejection, cancellation at either milestone
+(including default No/EOF and combined metadata), all terminal states at all OA
+stages, chronological dates, and malformed legacy history. No model/schema change.
+The old independent OA lifecycle validator was replaced with the single next-
+milestone rule. The original concurrency limitations still apply.

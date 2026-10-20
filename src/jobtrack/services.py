@@ -4,6 +4,7 @@ Use a dedicated session per operation. Failures roll back the entire session;
 reads never commit. Returned applications include history and survive session close.
 """
 from datetime import date, datetime
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 from collections.abc import Mapping
@@ -17,7 +18,7 @@ from jobtrack.rules import (
     normalize_required_text, normalize_optional_text, normalize_category,
     normalize_job_type, normalize_source, normalize_work_modality,
     require_active_application, normalize_status_change, normalize_status,
-    normalize_oa_action, validate_oa_lifecycle, normalize_date,
+    normalize_oa_action, normalize_date, next_oa_milestone,
 )
 
 
@@ -121,9 +122,49 @@ def _validate_id(application_id):
         raise ValidationError("Application ID must be a positive integer.")
 
 
+@dataclass(frozen=True)
+class OAProposal:
+    """Read-only proposal; a None event_type means the assessment is complete."""
+
+    event_type: str | None
+    event_date: date
+
+
+def _oa_proposal(session, application_id, status, application_date, day):
+    events = session.execute(
+        select(ApplicationEvent.event_type, ApplicationEvent.event_date).where(
+            ApplicationEvent.application_id == application_id,
+            ApplicationEvent.event_type.in_(("OA_RECEIVED", "OA_COMPLETED")),
+        )
+    ).all()
+    return OAProposal(next_oa_milestone(
+        status=status, application_date=application_date, events=events, event_date=day,
+    ), day)
+
+
+def propose_online_assessment(
+    session: Session, application_id: int, *, event_date: date | None = None,
+) -> OAProposal:
+    """Inspect current stored state without writes, flushes, or commits.
+
+    After confirmation, pass event_type as expected_oa and event_date to update.
+    Cancellation requires no write call. Recording always rechecks current history.
+    """
+    _validate_id(application_id)
+    day = normalize_date(event_date if event_date is not None else date.today(), "Event date")
+    with session.no_autoflush:
+        row = session.execute(select(Application.status, Application.application_date).where(
+            Application.id == application_id,
+        )).one_or_none()
+        if row is None:
+            raise ApplicationNotFound(f"Application #{application_id} not found.")
+        return _oa_proposal(session, application_id, row.status, row.application_date, day)
+
+
 @_atomic
 def update_application(session: Session, application_id: int, *,
-                       metadata: Mapping | None = None, oa: str | None = None,
+                       metadata: Mapping | None = None, oa: bool = False,
+                       expected_oa: str | None = None,
                        interview: bool = False, activity_note: str | None = None,
                        status: str | None = None, event_date: date | None = None) -> Application:
     """Atomically update metadata and/or append events; status is applied last.
@@ -134,22 +175,31 @@ def update_application(session: Session, application_id: int, *,
     _validate_id(application_id)
     if type(interview) is not bool:
         raise ValidationError("Interview must be a boolean.")
+    if type(oa) is not bool:
+        raise ValidationError("Online assessment must be a boolean.")
+    if expected_oa is not None and (
+        not oa or expected_oa not in ("OA_RECEIVED", "OA_COMPLETED")
+    ):
+        raise ValidationError("An expected OA milestone requires an online assessment update.")
     values = _metadata(metadata) if metadata is not None else {}
-    if not values and oa is None and not interview and activity_note is None and status is None:
+    if not values and not oa and not interview and activity_note is None and status is None:
         raise ValidationError("No application changes supplied.")
     day = normalize_date(event_date if event_date is not None else date.today(), "Event date")
     application = get_application(session, application_id)
     if application is None:
         raise ApplicationNotFound(f"Application #{application_id} not found.")
+    session.refresh(application)
     for key, value in values.items():
         setattr(application, key, value)
-    if oa is not None:
-        require_active_application(application.status)
-        action = normalize_oa_action(oa)
-        types = {event.event_type for event in application.events}
-        validate_oa_lifecycle(action, has_received="OA_RECEIVED" in types,
-                              has_completed="OA_COMPLETED" in types)
-        _event(session, application, f"OA_{action.upper()}", day)
+    if oa:
+        proposal = _oa_proposal(
+            session, application_id, application.status, application.application_date, day,
+        )
+        if proposal.event_type is None:
+            raise ValidationError("Online assessment already completed.")
+        if expected_oa is not None and proposal.event_type != expected_oa:
+            raise ValidationError("Online assessment history changed. Request a new proposal.")
+        _event(session, application, proposal.event_type, day)
     if interview:
         require_active_application(application.status)
         _event(session, application, "INTERVIEW", day)
@@ -179,7 +229,14 @@ def _latest_event(application, event_types):
 
 
 def record_oa(session, application_id, action, event_date):
-    return _latest_event(update_application(session, application_id, oa=action, event_date=event_date),
+    """Compatibility adapter: an explicit action is an expected milestone, not a choice."""
+    try:
+        expected = f"OA_{normalize_oa_action(action).upper()}"
+    except ValidationError:
+        session.rollback()
+        raise
+    return _latest_event(update_application(session, application_id, oa=True,
+                                            expected_oa=expected, event_date=event_date),
                          ("OA_RECEIVED", "OA_COMPLETED"))
 
 

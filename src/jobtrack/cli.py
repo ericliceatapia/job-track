@@ -19,6 +19,7 @@ from jobtrack.services import (
     list_applications,
     get_application,
     update_application,
+    propose_online_assessment,
     export_application_data,
 )
 from jobtrack.rules import (
@@ -27,7 +28,6 @@ from jobtrack.rules import (
     VALID_SOURCES,
     VALID_WORK_MODALITIES,
     STATUS_CHANGE_OPTIONS,
-    VALID_OA_ACTIONS,
 )
 
 
@@ -392,7 +392,7 @@ def update(
     clear_notes: bool = False,
     clear_location: bool = False,
     clear_job_id: bool = False,
-    oa: Annotated[str | None, typer.Option(help="Assessment received or completed.")] = None,
+    oa: Annotated[bool, typer.Option("--oa", help="Propose and confirm the next online assessment milestone.")] = False,
     interview: bool = False,
     activity_note: str | None = None,
     status: str | None = None,
@@ -414,7 +414,7 @@ def update(
     day = parse_date(event_date) if event_date is not None else date.today()
     if application_id is None:
         application_id = typer.prompt("Application ID", type=int)
-    if not metadata and oa is None and not interview and activity_note is None and status is None:
+    if not metadata and not oa and not interview and activity_note is None and status is None:
         action = prompt_option("Update", (
             "Application metadata", "Role notes", "Online assessment", "Interview",
             "Activity note", "Status",
@@ -437,7 +437,7 @@ def update(
         elif action == "Role notes":
             metadata["notes"] = typer.prompt("Role notes (replaces text; Enter to clear)", default="", show_default=False)
         elif action == "Online assessment":
-            oa = prompt_option("OA action", VALID_OA_ACTIONS)
+            oa = True
         elif action == "Interview":
             interview = True
         elif action == "Activity note":
@@ -446,9 +446,23 @@ def update(
             status = prompt_option("New status", STATUS_CHANGE_OPTIONS)
     try:
         with create_session() as session:
+            expected_oa = None
+            if oa:
+                proposal = propose_online_assessment(session, application_id, event_date=day)
+                if proposal.event_type is None:
+                    typer.echo("Online assessment already completed.")
+                    return
+                question = {
+                    "OA_RECEIVED": "Record online assessment received?",
+                    "OA_COMPLETED": "Mark online assessment completed?",
+                }[proposal.event_type]
+                if not typer.confirm(question, default=False):
+                    typer.echo("Update cancelled.")
+                    return
+                expected_oa = proposal.event_type
             application = update_application(
                 session, application_id, metadata=metadata, oa=oa, interview=interview,
-                activity_note=activity_note, status=status, event_date=day,
+                activity_note=activity_note, status=status, event_date=day, expected_oa=expected_oa,
             )
     except ValueError as error:
         typer.echo(str(error), err=True)

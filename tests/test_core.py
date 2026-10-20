@@ -112,13 +112,13 @@ def test_failed_write_rolls_back(session, make):
 def test_combined_update_and_detached_history(session, make):
     a = make()
     a = s.update_application(session, a.id, metadata={"company": " New ", "notes": "role"},
-                             oa="received", interview=True, activity_note="note", status="offer",
-                             event_date=date(2026, 9, 1))
+                             oa=True, interview=True, activity_note="note", status="offer",
+                             event_date=DAY)
     session.close()
     assert (a.company, a.status, a.notes) == ("New", "Offer", "role")
     assert [e.event_type for e in a.events] == [
-        "OA_RECEIVED", "INTERVIEW", "NOTE_ADDED", "STATUS_CHANGED", "APPLICATION_CREATED"]
-    assert a.events[3].old_value == "Applied"
+        "APPLICATION_CREATED", "OA_RECEIVED", "INTERVIEW", "NOTE_ADDED", "STATUS_CHANGED"]
+    assert a.events[4].old_value == "Applied"
 
 @pytest.mark.parametrize("changes", [
     {"metadata": {"company": "Changed"}, "oa": "completed"},
@@ -224,14 +224,15 @@ def test_creation_validation(session, make, field, value):
     assert session.scalars(select(ApplicationEvent)).all() == []
 
 
-def test_date_then_id_order_and_backdated_milestones(session, make):
+def test_date_then_id_order_and_oa_chronology(session, make):
     later = make(application_date=date(2026, 10, 3))
     earlier = make(application_date=DAY)
     tied = make(application_date=DAY)
     assert [a.id for a in s.list_applications(session)] == [earlier.id, tied.id, later.id]
     s.record_oa(session, earlier.id, "received", DAY)
-    s.record_oa(session, earlier.id, "completed", date(2026, 9, 1))
-    assert s.get_application(session, earlier.id).events[0].event_type == "OA_COMPLETED"
+    with pytest.raises(ValueError, match="cannot precede"):
+        s.record_oa(session, earlier.id, "completed", date(2026, 9, 1))
+    assert len(s.get_application(session, earlier.id).events) == 2
 
 
 def test_validation_rolls_back_owned_session(session, make):
@@ -256,3 +257,115 @@ def test_core_has_no_interface_imports():
                      [item.name for item in node.names] if isinstance(node, ast.Import) else [])
             assert not any(name and (name in forbidden or name.split('.')[0] in forbidden)
                            for name in names), path
+
+
+def test_automatic_oa_proposals_and_completion(session, make):
+    a = make()
+    received = s.propose_online_assessment(session, a.id, event_date=DAY)
+    assert (received.event_type, received.event_date) == ("OA_RECEIVED", DAY)
+    assert len(a.events) == 1
+    s.update_application(session, a.id, oa=True, expected_oa=received.event_type,
+                         event_date=received.event_date)
+    completed = s.propose_online_assessment(session, a.id, event_date=DAY)
+    assert completed.event_type == "OA_COMPLETED"
+    s.update_application(session, a.id, oa=True, expected_oa=completed.event_type,
+                         event_date=completed.event_date)
+    timestamp = a.updated_at
+    assert s.propose_online_assessment(session, a.id).event_type is None
+    with pytest.raises(ValueError, match="Online assessment already completed"):
+        s.update_application(session, a.id, oa=True, metadata={"company": "Changed"})
+    assert a.company == "Acme" and a.updated_at == timestamp
+    assert [e.event_type for e in a.events] == ["APPLICATION_CREATED", "OA_RECEIVED", "OA_COMPLETED"]
+
+
+def test_oa_proposal_cancellation_does_not_flush(session, make):
+    a = make()
+    timestamp = a.updated_at
+    a.company = "Pending unrelated change"
+    def forbidden(*args):
+        raise AssertionError("Proposal must not flush or commit")
+    event.listen(session, "before_flush", forbidden)
+    event.listen(session, "before_commit", forbidden)
+    try:
+        assert s.propose_online_assessment(session, a.id, event_date=DAY).event_type == "OA_RECEIVED"
+        # Cancel: never call update_application.
+    finally:
+        event.remove(session, "before_flush", forbidden)
+        event.remove(session, "before_commit", forbidden)
+    session.rollback()
+    assert (a.company, a.updated_at, len(a.events)) == ("Acme", timestamp, 1)
+
+
+def test_stale_oa_confirmation_cannot_record_different_milestone(session, make):
+    a = make()
+    proposal = s.propose_online_assessment(session, a.id, event_date=DAY)
+    s.update_application(session, a.id, oa=True, event_date=DAY)
+    with pytest.raises(ValueError, match="history changed"):
+        s.update_application(session, a.id, oa=True, expected_oa=proposal.event_type,
+                             event_date=DAY, metadata={"company": "Changed"})
+    assert a.company == "Acme" and len(a.events) == 2
+
+
+@pytest.mark.parametrize("status", ["Offer", "Rejected", "Withdrawn"])
+@pytest.mark.parametrize("milestones", [0, 1, 2])
+def test_automatic_oa_closed_restrictions(session, make, status, milestones):
+    a = make()
+    for _ in range(milestones):
+        s.update_application(session, a.id, oa=True, event_date=DAY)
+    s.change_status(session, a.id, status, DAY)
+    timestamp = a.updated_at
+    for operation in (s.propose_online_assessment, s.update_application):
+        kwargs = {"oa": True} if operation is s.update_application else {}
+        with pytest.raises(ValueError, match="Cannot perform"):
+            operation(session, a.id, event_date=DAY, **kwargs)
+    assert len(a.events) == milestones + 2 and a.updated_at == timestamp
+
+
+def test_oa_historical_dates_and_chronology(session, make):
+    a = make()
+    before_application = date(2026, 9, 30)
+    received_day = date(2026, 10, 3)
+    for operation in (s.propose_online_assessment, s.update_application):
+        kwargs = {"oa": True} if operation is s.update_application else {}
+        with pytest.raises(ValueError, match="application date"):
+            operation(session, a.id, event_date=before_application, **kwargs)
+    s.update_application(session, a.id, oa=True, event_date=received_day)
+    for operation in (s.propose_online_assessment, s.update_application):
+        kwargs = {"oa": True} if operation is s.update_application else {}
+        with pytest.raises(ValueError, match="precede receipt"):
+            operation(session, a.id, event_date=DAY, **kwargs)
+    s.update_application(session, a.id, oa=True, event_date=received_day)
+    assert [e.event_date for e in a.events] == [DAY, received_day, received_day]
+
+
+def test_oa_inconsistent_legacy_history_is_not_repaired(session, make):
+    a = make()
+    session.add(ApplicationEvent(application_id=a.id, event_type="OA_COMPLETED", event_date=DAY))
+    session.commit()
+    with pytest.raises(ValueError, match="without receipt"):
+        s.propose_online_assessment(session, a.id)
+    with pytest.raises(ValueError, match="without receipt"):
+        s.update_application(session, a.id, oa=True)
+    assert len(s.get_application(session, a.id).events) == 2
+
+
+def test_oa_proposal_missing_id_and_invalid_date(session):
+    from jobtrack.errors import ApplicationNotFound, ValidationError
+    with pytest.raises(ApplicationNotFound):
+        s.propose_online_assessment(session, 999)
+    with pytest.raises(ValidationError):
+        s.propose_online_assessment(session, 1, event_date="2026-10-01")
+
+
+def test_oa_rechecks_closure_after_proposal(session, make):
+    a = make()
+    proposal = s.propose_online_assessment(session, a.id, event_date=DAY)
+    # A second interface closes the application while confirmation is pending.
+    with Session(session.get_bind()) as other:
+        s.change_status(other, a.id, "Rejected", DAY)
+    assert a.status == "Applied"  # Original identity-map value is stale.
+    with pytest.raises(ValueError, match="Cannot perform"):
+        s.update_application(session, a.id, oa=True, expected_oa=proposal.event_type,
+                             event_date=proposal.event_date)
+    assert a.status == "Rejected"
+    assert [e.event_type for e in a.events] == ["APPLICATION_CREATED", "STATUS_CHANGED"]

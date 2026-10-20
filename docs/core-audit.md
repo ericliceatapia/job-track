@@ -63,3 +63,13 @@ expanding tests for atomic combined updates, detached results, metadata validati
 CLI workflows, and database compatibility. All tests use temporary/in-memory
 SQLite; never initialize or open the production database. Document intentional
 contract changes and remaining concurrency limitations in the final report.
+
+
+## Accepted amendment: simplified Online Assessment
+
+The baseline observations above describe pre-refactor behavior. The
+[Online Assessment amendment](online-assessment-amendment.md) supersedes the
+original action-selection and OA date behavior: expose one activity, propose the
+next milestone from stored history, confirm before writing, revalidate on write,
+and enforce receipt/application and completion/receipt chronology. Preserve the
+two event types and all terminal restrictions, without changing schema.

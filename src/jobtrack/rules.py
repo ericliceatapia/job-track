@@ -211,40 +211,27 @@ def require_active_application(status: str) -> None:
         )
 
 
-def validate_oa_lifecycle(
-    action: str,
-    *,
-    has_received: bool,
-    has_completed: bool,
-) -> None:
-    """Validate an OA action against its existing lifecycle."""
-
-    if action == "received":
-        if has_received:
-            raise ValidationError(
-                "OA has already been recorded as received."
-            )
-
-        return
-
-    if action == "completed":
-        if not has_received:
-            raise ValidationError(
-                "Cannot complete an OA before recording it as received."
-            )
-
-        if has_completed:
-            raise ValidationError(
-                "OA has already been recorded as completed."
-            )
-
-        return
-
-    raise ValidationError(f"Invalid OA action: {action}")
-
 def normalize_date(value, field_name: str):
     """Require a calendar date, not a datetime or an implicit string."""
     from datetime import date
     if type(value) is not date:
         raise ValidationError(f"{field_name} must be a date.")
     return value
+
+
+def next_oa_milestone(*, status, application_date, events, event_date):
+    """Determine the next OA event and validate its chronology from stored history."""
+    require_active_application(status)
+    received = [day for kind, day in events if kind == "OA_RECEIVED"]
+    completed = [day for kind, day in events if kind == "OA_COMPLETED"]
+    if completed and not received:
+        raise ValidationError("Invalid OA history: completion exists without receipt.")
+    if completed:
+        return None
+    if event_date < application_date:
+        raise ValidationError("Online assessment date cannot precede the application date.")
+    if received:
+        if event_date < max(received):
+            raise ValidationError("Online assessment completion cannot precede receipt.")
+        return "OA_COMPLETED"
+    return "OA_RECEIVED"

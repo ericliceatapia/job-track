@@ -40,12 +40,18 @@ The public commands are `jt add`, `jt list`, `jt show ID`, `jt update [ID]`,
 jt update 1 --company "New company" --role-title "Data Analyst"
 jt update 1 --notes "Role description"
 jt update 1 --clear-notes
-jt update 1 --oa received
-jt update 1 --oa completed --event-date 2026-10-20
+jt update 1 --oa
+jt update 1 --oa --event-date 2026-10-20
 jt update 1 --interview --activity-note "Panel interview"
 jt update 1 --status Offer
 jt export applications.xlsx --company Acme --status Applied
 ```
+
+Online Assessment automatically proposes receipt, then completion, based on history.
+Confirm the proposal to save it; cancellation saves no part of the update. Once
+completed, no further assessment event is added. Use `--event-date YYYY-MM-DD`
+for a historical milestone. Receipt cannot precede the application date, and
+completion cannot precede receipt; same-day milestones are allowed.
 
 Combine update flags to save changes atomically. Use `--clear-location` and
 `--clear-job-id` for optional metadata. Status, assessment, interview, role-note,
