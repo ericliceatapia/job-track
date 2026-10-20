@@ -108,3 +108,105 @@ def test_failed_write_rolls_back(session, make):
     assert session.scalars(select(Application)).all() == []
     assert session.scalars(select(ApplicationEvent)).all() == []
     assert make().id == 1
+
+def test_combined_update_and_detached_history(session, make):
+    a = make()
+    a = s.update_application(session, a.id, metadata={"company": " New ", "notes": "role"},
+                             oa="received", interview=True, activity_note="note", status="offer",
+                             event_date=date(2026, 9, 1))
+    session.close()
+    assert (a.company, a.status, a.notes) == ("New", "Offer", "role")
+    assert [e.event_type for e in a.events] == [
+        "OA_RECEIVED", "INTERVIEW", "NOTE_ADDED", "STATUS_CHANGED", "APPLICATION_CREATED"]
+    assert a.events[3].old_value == "Applied"
+
+@pytest.mark.parametrize("changes", [
+    {"metadata": {"company": "Changed"}, "oa": "completed"},
+    {"metadata": {"company": "Changed"}, "activity_note": " "},
+    {"interview": True, "status": "invalid"},
+    {"metadata": {"id": 3}}, {"metadata": {"company": None}},
+    {"event_date": "2026-10-01", "interview": True},
+    {"metadata": {"application_date": "2026-10-01"}}, {},
+])
+def test_invalid_update_is_atomic(session, make, changes):
+    from jobtrack.errors import ValidationError
+    a = make()
+    with pytest.raises(ValidationError):
+        s.update_application(session, a.id, **changes)
+    assert a.company == "Acme"
+    assert a.status == "Applied"
+    assert len(s.get_application(session, a.id).events) == 1
+    assert not session.new
+
+
+def test_update_persistence_failure(session, make):
+    a = make()
+    original_updated = a.updated_at
+    def fail(mapper, connection, target):
+        raise RuntimeError("event write failed")
+    event.listen(ApplicationEvent, "before_insert", fail)
+    try:
+        with pytest.raises(RuntimeError):
+            s.update_application(session, a.id, metadata={"company": "changed"},
+                                 interview=True, status="Offer")
+    finally:
+        event.remove(ApplicationEvent, "before_insert", fail)
+    assert (a.company, a.status, a.updated_at) == ("Acme", "Applied", original_updated)
+    assert len(a.events) == 1
+    s.record_interview(session, a.id, DAY)
+
+
+def test_metadata_fields_and_history(session, make):
+    a = make()
+    fields = dict(company="New", role_title="Engineer", category="software", location="NY",
+                  work_modality="hybrid", job_type="contract", source="referral",
+                  application_date=date(2026, 10, 2), job_id=None, notes="text")
+    s.update_application(session, a.id, metadata=fields)
+    assert a.category == "Software"
+    assert a.job_type == "Contract"
+    assert a.source == "Referral"
+    assert a.work_modality == "Hybrid"
+    assert a.job_id is None
+    assert a.events[0].event_date == DAY
+    s.update_application(session, a.id, metadata={"location": " ", "notes": None})
+    assert a.location is None and a.notes is None
+
+
+def test_read_results_survive_close(session, make):
+    a = make()
+    s.record_interview(session, a.id, DAY)
+    applications = s.list_applications(session)
+    result = s.get_application(session, a.id)
+    session.close()
+    assert len(applications[0].events) == len(result.events) == 2
+
+
+def test_explicit_database_path_and_existing_schema(tmp_path, monkeypatch):
+    from jobtrack import database
+    def forbidden():
+        raise AssertionError("Production database path must never be resolved")
+    monkeypatch.setattr(database, "get_database_path", forbidden)
+    path = tmp_path / "isolated.db"
+    # Create the unchanged model schema before exercising the database API.
+    engine = create_engine(f"sqlite:///{path.as_posix()}")
+    Base.metadata.create_all(engine)
+    engine.dispose()
+    database.initialize_database(path)
+    assert database.create_database_engine(path) is database.create_database_engine(path)
+    with database.create_session(path) as isolated:
+        assert s.list_applications(isolated) == []
+    database.create_database_engine(path).dispose()
+
+
+def test_export_operation(session, make, tmp_path):
+    make()
+    make(company="Other")
+    assert s.export_application_data(session, tmp_path / "filtered.xlsx", company="acme") == (1, 1)
+
+
+def test_domain_errors(session):
+    from jobtrack.errors import ApplicationNotFound, ValidationError
+    with pytest.raises(ApplicationNotFound):
+        s.update_application(session, 999, interview=True)
+    with pytest.raises(ValidationError):
+        s.get_application(session, True)

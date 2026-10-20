@@ -1,3 +1,5 @@
+from jobtrack.errors import ValidationError
+
 CLOSED_STATUSES = (
     "Offer",
     "Rejected",
@@ -56,10 +58,10 @@ VALID_OA_ACTIONS = (
 def normalize_oa_action(action: str) -> str:
     """Normalize and validate an OA action."""
 
-    normalized_action = action.strip().casefold()
+    normalized_action = normalize_required_text(action, "OA action").casefold()
 
     if normalized_action not in VALID_OA_ACTIONS:
-        raise ValueError(
+        raise ValidationError(
             "Invalid OA action. Use 'received' or 'completed'."
         )
 
@@ -85,20 +87,20 @@ def normalize_status_change(
     normalized_status = normalize_status(new_status)
 
     if current_status == normalized_status:
-        raise ValueError(
+        raise ValidationError(
             f"Application is already {normalized_status}."
         )
 
     allowed_statuses = ALLOWED_STATUS_TRANSITIONS.get(current_status)
 
     if allowed_statuses is None:
-        raise ValueError(
+        raise ValidationError(
             f"Application has an invalid current status: "
             f"{current_status}"
         )
 
     if normalized_status not in allowed_statuses:
-        raise ValueError(
+        raise ValidationError(
             f"Cannot change status from "
             f"{current_status} to {normalized_status}."
         )
@@ -113,7 +115,7 @@ def _normalize_controlled_value(
 ) -> str:
     """Normalize a controlled value to its canonical representation."""
 
-    normalized_input = value.strip().casefold()
+    normalized_input = normalize_required_text(value, field_name).casefold()
 
     value_map = {
         valid_value.casefold(): valid_value
@@ -121,7 +123,7 @@ def _normalize_controlled_value(
     }
 
     if normalized_input not in value_map:
-        raise ValueError(
+        raise ValidationError(
             f"Invalid {field_name}: {value}"
         )
 
@@ -174,10 +176,12 @@ def normalize_required_text(
 ) -> str:
     """Strip and validate a required text field."""
 
+    if not isinstance(value, str):
+        raise ValidationError("Text fields must be strings.")
     normalized = value.strip()
 
     if not normalized:
-        raise ValueError(f"{field_name} cannot be empty.")
+        raise ValidationError(f"{field_name} cannot be empty.")
 
     return normalized
 
@@ -190,6 +194,8 @@ def normalize_optional_text(
     if value is None:
         return None
 
+    if not isinstance(value, str):
+        raise ValidationError("Text fields must be strings.")
     normalized = value.strip()
 
     return normalized or None
@@ -199,7 +205,7 @@ def require_active_application(status: str) -> None:
     """Require an application to be active."""
 
     if status in CLOSED_STATUSES:
-        raise ValueError(
+        raise ValidationError(
             f"Cannot perform this action on an application "
             f"with status '{status}'."
         )
@@ -215,7 +221,7 @@ def validate_oa_lifecycle(
 
     if action == "received":
         if has_received:
-            raise ValueError(
+            raise ValidationError(
                 "OA has already been recorded as received."
             )
 
@@ -223,15 +229,22 @@ def validate_oa_lifecycle(
 
     if action == "completed":
         if not has_received:
-            raise ValueError(
+            raise ValidationError(
                 "Cannot complete an OA before recording it as received."
             )
 
         if has_completed:
-            raise ValueError(
+            raise ValidationError(
                 "OA has already been recorded as completed."
             )
 
         return
 
-    raise ValueError(f"Invalid OA action: {action}")
+    raise ValidationError(f"Invalid OA action: {action}")
+
+def normalize_date(value, field_name: str):
+    """Require a calendar date, not a datetime or an implicit string."""
+    from datetime import date
+    if type(value) is not date:
+        raise ValidationError(f"{field_name} must be a date.")
+    return value

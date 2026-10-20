@@ -1,4 +1,4 @@
-﻿from datetime import date, datetime
+from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
 
@@ -7,6 +7,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 from jobtrack.models import Application
+from jobtrack.errors import ValidationError
 
 
 def export_applications(
@@ -18,9 +19,9 @@ def export_applications(
     """Write an Excel workbook and return the number of exported events."""
 
     if destination.suffix.lower() != ".xlsx":
-        raise ValueError("Export filename must end in .xlsx.")
+        raise ValidationError("Export filename must end in .xlsx.")
     if destination.exists() and not overwrite:
-        raise ValueError("File already exists. Use --overwrite to replace it.")
+        raise ValidationError("File already exists. Enable overwrite to replace it.")
 
     workbook = Workbook()
     sheet = workbook.active
@@ -90,3 +91,4 @@ def export_applications(
     with destination.open("wb" if overwrite else "xb") as output:
         output.write(payload.getvalue())
     return len(events)
+
