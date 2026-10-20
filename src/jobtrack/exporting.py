@@ -91,4 +91,3 @@ def export_applications(
     with destination.open("wb" if overwrite else "xb") as output:
         output.write(payload.getvalue())
     return len(events)
-

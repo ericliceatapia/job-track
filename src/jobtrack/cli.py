@@ -18,11 +18,8 @@ from jobtrack.services import (
     create_application,
     list_applications,
     get_application,
-    change_status,
-    record_oa,
-    record_interview,
-    edit_role_notes,
-    record_note,
+    update_application,
+    export_application_data,
 )
 from jobtrack.rules import (
     VALID_CATEGORIES,
@@ -289,10 +286,11 @@ def show(application_id: int) -> None:
     """Show an application and its event history."""
 
     with create_session() as session:
-        application = get_application(
-            session,
-            application_id,
-        )
+        try:
+            application = get_application(session, application_id)
+        except ValueError as error:
+            typer.echo(str(error), err=True)
+            raise typer.Exit(code=1)
 
         if application is None:
             typer.echo(
@@ -333,7 +331,7 @@ def show(application_id: int) -> None:
         console.print(details)
         console.print()
         console.print(Panel(
-            Text(application.notes or "No role notes yet. Use jt edit to add them."),
+            Text(application.notes or "No role notes yet. Use jt update to add them."),
             title="Role notes",
             title_align="left",
             border_style="dim",
@@ -356,10 +354,7 @@ def show(application_id: int) -> None:
         history = Table.grid(padding=(0, 4))
         history.add_column(style="dim", no_wrap=True)
         history.add_column(overflow="fold")
-        for event in sorted(
-            application.events,
-            key=lambda event: (event.event_date, event.id),
-        ):
+        for event in application.events:
             description = Text(
                 event_labels.get(event.event_type, event.event_type),
                 style="bold",
@@ -382,154 +377,94 @@ def show(application_id: int) -> None:
 
 
 @app.command()
-def status(
-    application_id: int,
-    new_status: Annotated[str | None, typer.Argument()] = None,
+def update(
+    application_id: Annotated[int | None, typer.Argument(help="Application ID; prompts if omitted.")] = None,
+    company: str | None = None,
+    role_title: str | None = None,
+    category: str | None = None,
+    location: str | None = None,
+    work_modality: str | None = None,
+    job_type: str | None = None,
+    source: str | None = None,
+    application_date: Annotated[str | None, typer.Option(help="Correct metadata date (YYYY-MM-DD); preserves history.")] = None,
+    job_id: str | None = None,
+    notes: Annotated[str | None, typer.Option(help="Replace role notes.")] = None,
+    clear_notes: bool = False,
+    clear_location: bool = False,
+    clear_job_id: bool = False,
+    oa: Annotated[str | None, typer.Option(help="Assessment received or completed.")] = None,
+    interview: bool = False,
+    activity_note: str | None = None,
+    status: str | None = None,
+    event_date: Annotated[str | None, typer.Option(help="New event date (YYYY-MM-DD), default today.")] = None,
 ) -> None:
-    """Change an application's status."""
-
-    if new_status is None:
-        new_status = prompt_option(
-            "New status",
-            STATUS_CHANGE_OPTIONS,
-        )
-
+    """Update metadata, notes, assessments, interviews, or status atomically."""
+    metadata = {key: value for key, value in {
+        "company": company, "role_title": role_title, "category": category,
+        "location": location, "work_modality": work_modality, "job_type": job_type,
+        "source": source, "job_id": job_id, "notes": notes,
+    }.items() if value is not None}
+    for key, clear in (("notes", clear_notes), ("location", clear_location), ("job_id", clear_job_id)):
+        if clear:
+            if key in metadata:
+                raise typer.BadParameter(f"Use either --{key.replace('_', '-')} or --clear-{key.replace('_', '-')}.")
+            metadata[key] = None
+    if application_date is not None:
+        metadata["application_date"] = parse_date(application_date)
+    day = parse_date(event_date) if event_date is not None else date.today()
+    if application_id is None:
+        application_id = typer.prompt("Application ID", type=int)
+    if not metadata and oa is None and not interview and activity_note is None and status is None:
+        action = prompt_option("Update", (
+            "Application metadata", "Role notes", "Online assessment", "Interview",
+            "Activity note", "Status",
+        ))
+        if action == "Application metadata":
+            field = prompt_option("Field", (
+                "company", "role_title", "category", "location", "work_modality",
+                "job_type", "source", "application_date", "job_id",
+            ))
+            choices = {"category": VALID_CATEGORIES, "work_modality": VALID_WORK_MODALITIES,
+                       "job_type": VALID_JOB_TYPES, "source": VALID_SOURCES}
+            if field in choices:
+                metadata[field] = prompt_option(field.replace("_", " ").title(), choices[field])
+            elif field == "application_date":
+                metadata[field] = prompt_date("Application date")
+            elif field in ("location", "job_id"):
+                metadata[field] = typer.prompt(f"{field} (Enter to clear)", default="", show_default=False)
+            else:
+                metadata[field] = prompt_required_text(field.replace("_", " ").title())
+        elif action == "Role notes":
+            metadata["notes"] = typer.prompt("Role notes (replaces text; Enter to clear)", default="", show_default=False)
+        elif action == "Online assessment":
+            oa = prompt_option("OA action", VALID_OA_ACTIONS)
+        elif action == "Interview":
+            interview = True
+        elif action == "Activity note":
+            activity_note = prompt_required_text("Activity note")
+        else:
+            status = prompt_option("New status", STATUS_CHANGE_OPTIONS)
     try:
         with create_session() as session:
-            application = change_status(
-                session,
-                application_id=application_id,
-                new_status=new_status,
-                event_date=date.today(),
+            application = update_application(
+                session, application_id, metadata=metadata, oa=oa, interview=interview,
+                activity_note=activity_note, status=status, event_date=day,
             )
-
-            application_company = application.company
-            application_role = application.role_title
-            application_status = application.status
-
     except ValueError as error:
         typer.echo(str(error), err=True)
         raise typer.Exit(code=1)
-
-    typer.echo()
-    typer.echo(
-        f"Updated #{application_id}: "
-        f"{application_company} - {application_role}"
-    )
-    typer.echo(f"Status: {application_status}")
+    typer.echo(f"Updated application #{application.id}: {application.company} - {application.role_title}")
 
 
-@app.command()
-def oa(
-    application_id: int,
-    action: Annotated[str | None, typer.Argument()] = None,
-) -> None:
-    """Record an OA as received or completed."""
-
-    if action is None:
-        action = prompt_option(
-            "OA action",
-            VALID_OA_ACTIONS,
-        )
-
+def parse_date(value: str) -> date:
+    """Parse explicit CLI dates without accepting alternate ISO formats."""
     try:
-        with create_session() as session:
-            event = record_oa(
-                session,
-                application_id=application_id,
-                action=action,
-                event_date=date.today(),
-            )
-
-            event_type = event.event_type
-
-    except ValueError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(code=1)
-
-    typer.echo()
-    typer.echo(
-        f"Recorded {event_type} for application "
-        f"#{application_id}."
-    )
-
-
-@app.command()
-def interview(
-    application_id: int,
-) -> None:
-    """Record an interview for an application."""
-
-    try:
-        with create_session() as session:
-            event = record_interview(
-                session,
-                application_id=application_id,
-                event_date=date.today(),
-            )
-
-            interview_date = event.event_date
-
-    except ValueError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(code=1)
-
-    typer.echo()
-    typer.echo(
-        f"Recorded interview for application "
-        f"#{application_id} on {interview_date}."
-    )
-
-@app.command()
-def log(
-    application_id: int,
-    message: Annotated[str | None, typer.Argument()] = None,
-) -> None:
-    """Append a dated activity note to application history."""
-
-    if message is None:
-        message = prompt_required_text("Activity note")
-
-    try:
-        with create_session() as session:
-            record_note(session, application_id, message, date.today())
-    except ValueError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(code=1)
-
-    typer.echo(f"Added activity note to application #{application_id}.")
-
-
-@app.command()
-def edit(
-    application_id: int,
-    notes: Annotated[str | None, typer.Option(
-        "--notes",
-        help="Replace role notes. Use edit without options for guided input.",
-    )] = None,
-    clear_notes: Annotated[bool, typer.Option(
-        "--clear-notes", help="Clear the role notes panel.",
-    )] = False,
-) -> None:
-    """Edit role notes. Without options, prompt for replacement text."""
-
-    if clear_notes and notes is not None:
-        raise typer.BadParameter("Use either --notes or --clear-notes.")
-
-    if not clear_notes and notes is None:
-        notes = prompt_required_text("Role notes (replaces current text)")
-    if not clear_notes and not notes.strip():
-        raise typer.BadParameter("Use --clear-notes to clear role notes.")
-
-    try:
-        with create_session() as session:
-            edit_role_notes(session, application_id, None if clear_notes else notes)
-    except ValueError as error:
-        typer.echo(str(error), err=True)
-        raise typer.Exit(code=1)
-
-    action = "Cleared" if clear_notes else "Updated"
-    typer.echo(f"{action} role notes for application #{application_id}.")
+        parsed = date.fromisoformat(value)
+        if value != parsed.isoformat():
+            raise ValueError()
+        return parsed
+    except ValueError:
+        raise typer.BadParameter("Invalid date. Use YYYY-MM-DD.")
 
 
 @app.command("export")
@@ -542,16 +477,11 @@ def export_command(
 ) -> None:
     """Export matching applications and their complete history to Excel."""
 
-    from jobtrack.exporting import export_applications
-
     try:
         with create_session() as session:
-            applications = list_applications(
-                session, company=company, status=status, category=category,
-            )
-            count = len(applications)
-            event_count = export_applications(
-                applications, destination, overwrite=overwrite,
+            count, event_count = export_application_data(
+                session, destination, company=company, status=status,
+                category=category, overwrite=overwrite,
             )
     except (ValueError, OSError) as error:
         typer.echo(str(error), err=True)

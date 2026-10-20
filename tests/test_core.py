@@ -210,3 +210,49 @@ def test_domain_errors(session):
         s.update_application(session, 999, interview=True)
     with pytest.raises(ValidationError):
         s.get_application(session, True)
+
+@pytest.mark.parametrize("field,value", [
+    ("company", " "), ("role_title", " "), ("category", "invalid"),
+    ("work_modality", "invalid"), ("job_type", "invalid"), ("source", "invalid"),
+    ("notes", 123), ("application_date", "2026-10-01"),
+])
+def test_creation_validation(session, make, field, value):
+    from jobtrack.errors import ValidationError
+    with pytest.raises(ValidationError):
+        make(**{field: value})
+    assert session.scalars(select(Application)).all() == []
+    assert session.scalars(select(ApplicationEvent)).all() == []
+
+
+def test_date_then_id_order_and_backdated_milestones(session, make):
+    later = make(application_date=date(2026, 10, 3))
+    earlier = make(application_date=DAY)
+    tied = make(application_date=DAY)
+    assert [a.id for a in s.list_applications(session)] == [earlier.id, tied.id, later.id]
+    s.record_oa(session, earlier.id, "received", DAY)
+    s.record_oa(session, earlier.id, "completed", date(2026, 9, 1))
+    assert s.get_application(session, earlier.id).events[0].event_type == "OA_COMPLETED"
+
+
+def test_validation_rolls_back_owned_session(session, make):
+    a = make()
+    a.company = "Uncommitted"
+    with pytest.raises(ValueError):
+        s.update_application(session, a.id, status="invalid")
+    assert a.company == "Acme"
+
+
+def test_core_has_no_interface_imports():
+    import ast
+    from pathlib import Path
+    root = Path(__file__).parents[1] / "src" / "jobtrack"
+    forbidden = {"typer", "rich", "textual", "PySide6", "jobtrack.cli"}
+    for path in root.glob("*.py"):
+        if path.name == "cli.py":
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            names = ([node.module] if isinstance(node, ast.ImportFrom) else
+                     [item.name for item in node.names] if isinstance(node, ast.Import) else [])
+            assert not any(name and (name in forbidden or name.split('.')[0] in forbidden)
+                           for name in names), path
